@@ -1,0 +1,213 @@
+LOCAL HIRE — PROJECT ARCHITECTURE & SPECIFICATION SPEC (V2)
+
+================================================================================
+1. PROJECT OVERVIEW & SCOPE
+================================================================================
+- Project Name: Local Hire
+- Platform: Native Desktop Application (Python)
+- Target Audience: College students, casual job seekers, and local micro-employers 
+  (retail shops, event organizers, catering businesses, service providers).
+- Core Purpose: Direct local discovery, transparent payment, fast job applications, 
+  and bilateral accountability (wage-theft and no-show protection).
+- Geographic Scope: Three Kerala districts — Kollam, Ernakulam, and Thiruvananthapuram.
+
+================================================================================
+2. STRICT TECHNOLOGY STACK & CONSTRAINTS
+================================================================================
+- Language: Python 3.10+
+- GUI Framework: customtkinter (Built on native Tkinter with modern UI cards, dark/light themes)
+- Database: sqlite3 (Python Standard Library; persists to a local 'localhire.db' file)
+- Security & Auth: hashlib (SHA-256 with salt) for zero-dependency password hashing
+- Distance Engine: Standard Python math module utilizing the Haversine Formula on static coordinates
+- STRICT RESTRICTIONS:
+  * Do NOT use HTML, CSS, JavaScript, React, Django, Flask, Electron, PyQtWebEngine, 
+    or any browser-based frameworks.
+  * This must be a native desktop application that launches locally with: python main.py
+
+================================================================================
+3. LOCATION & DISTANCE MATCHING ARCHITECTURE
+================================================================================
+To provide realistic proximity filtering without external web APIs or Google Maps keys:
+- The system uses a static coordinate lookup table of major localities in the 3 districts.
+- Distances are calculated mathematically using the Haversine Formula.
+- Workers and Jobs select their district and locality via dropdowns.
+- Privacy Rule: Exact street/house numbers are never collected or displayed.
+
+Coordinate Reference Table (coordinates.py):
+--------------------------------------------------------------------------------
+LOCALITY_DATA = {
+    # District: Kollam
+    "Chinnakada, Kollam": (8.8856, 76.5864),
+    "Kottarakkara, Kollam": (8.9989, 76.7709),
+    "Karunagappalli, Kollam": (9.0544, 76.5338),
+    "Kundara, Kollam": (8.9602, 76.6822),
+    "Paravur, Kollam": (8.8117, 76.6661),
+
+    # District: Ernakulam
+    "Kaloor, Ernakulam": (9.9934, 76.2970),
+    "Edappally, Ernakulam": (10.0236, 76.3116),
+    "Kakkanad, Ernakulam": (10.0159, 76.3419),
+    "Aluva, Ernakulam": (10.1076, 76.3516),
+    "Fort Kochi, Ernakulam": (9.9658, 76.2421),
+
+    # District: Thiruvananthapuram
+    "Palayam, Thiruvananthapuram": (8.5029, 76.9537),
+    "Kazhakkoottam, Thiruvananthapuram": (8.5686, 76.8731),
+    "Thampanoor, Thiruvananthapuram": (8.4907, 76.9528),
+    "Pattom, Thiruvananthapuram": (8.5244, 76.9463),
+    "Nedumangad, Thiruvananthapuram": (8.6015, 77.0024),
+}
+
+Haversine Distance Logic:
+- Radius of Earth R = 6371.0 km
+- Return distance rounded to 1 decimal place (e.g., "3.2 km away").
+- Workers can view distances on job cards and sort/filter listings by distance radius.
+
+================================================================================
+4. DATABASE SCHEMA (database.py)
+================================================================================
+All tables reside in 'localhire.db' and must enforce foreign keys and unique constraints.
+
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    salt TEXT NOT NULL,
+    role TEXT CHECK(role IN ('worker', 'employer', 'admin')) NOT NULL,
+    district TEXT NOT NULL,
+    locality TEXT NOT NULL,
+    is_blacklisted INTEGER DEFAULT 0,  -- For employers
+    is_suspended INTEGER DEFAULT 0,    -- For workers
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employer_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    district TEXT NOT NULL,
+    locality TEXT NOT NULL,
+    job_date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    payment REAL NOT NULL,
+    status TEXT DEFAULT 'open' CHECK(status IN ('open', 'filled', 'completed', 'cancelled')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employer_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS applications (
+    application_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    worker_id INTEGER NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'rejected', 'completed')),
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(job_id, worker_id),
+    FOREIGN KEY (job_id) REFERENCES jobs(job_id),
+    FOREIGN KEY (worker_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS complaints (
+    complaint_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    complaint_type TEXT CHECK(complaint_type IN ('non_payment', 'no_show')) NOT NULL,
+    job_id INTEGER NOT NULL,
+    complainant_id INTEGER NOT NULL,
+    accused_id INTEGER NOT NULL,
+    details TEXT NOT NULL,
+    agreed_payment REAL,
+    status TEXT DEFAULT 'submitted' CHECK(status IN ('submitted', 'under_review', 'verified', 'dismissed')),
+    admin_notes TEXT,
+    reviewed_by INTEGER,
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (job_id) REFERENCES jobs(job_id),
+    FOREIGN KEY (complainant_id) REFERENCES users(user_id),
+    FOREIGN KEY (accused_id) REFERENCES users(user_id),
+    FOREIGN KEY (reviewed_by) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS strikes (
+    strike_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    worker_id INTEGER NOT NULL,
+    complaint_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (worker_id) REFERENCES users(user_id),
+    FOREIGN KEY (complaint_id) REFERENCES complaints(complaint_id)
+);
+
+================================================================================
+5. ROLES & SYSTEM BEHAVIORS
+================================================================================
+
+A. WORKER:
+- Register/Login: Set name, phone, password, district, locality.
+- Browse Job Feed: Card-style UI showing job title, payment (₹), shift timing, 
+  category, locality, and calculated distance in km relative to worker's locality.
+- Filter/Sort: Filter by category (Retail, Hospitality, Telemarketing, Logistics, Events) 
+  and filter/sort by distance radius.
+- Apply: One-click application; prevented from applying if already applied.
+- Status Tracking: View list of applications ('pending', 'accepted', 'rejected', 'completed').
+- Dispute/Non-Payment Complaint: Can lodge a non-payment complaint on jobs marked 'accepted' or 'completed'.
+- Backend Suspension Check: If is_suspended == 1, backend prevents new applications.
+
+B. EMPLOYER:
+- Register/Login: Set name, phone, password, district, locality.
+- Post Job: Title, category, district, locality, date, start time, end time, payment (₹).
+- Manage Listings: View own posted jobs and see incoming applicant list.
+- Application Decision: Accept or Reject applicants.
+- Report No-Show: Can lodge a no-show complaint against an accepted worker.
+- Backend Blacklist Check: If is_blacklisted == 1, backend rejects job creation.
+
+C. ADMINISTRATOR:
+- Pre-seeded account: Phone '0000000000', Password 'admin123'.
+- Manage Disputes Console:
+  * Wage Disputes: View complaint, mark 'verified' (which blacklists employer and sets is_blacklisted = 1) 
+    or 'dismissed'.
+  * No-Show Disputes: View complaint, mark 'verified' (which issues a record in 'strikes').
+- Strike Suspension Rule: If a worker accumulates >= 3 active strikes, system sets is_suspended = 1.
+- Strike Reversal: Admin can reverse active strikes; if active count drops below 3, suspension clears.
+
+================================================================================
+6. PROJECT FILE STRUCTURE
+================================================================================
+LocalHire/
+│
+├── main.py                     # App entry point, session management, view switching
+├── coordinates.py              # Kerala coordinates matrix and Haversine distance function
+├── database.py                 # SQLite schema initialization and seed data insertion
+├── auth.py                     # Password hashing (hashlib), authentication, session state
+│
+├── views/
+│   ├── base_view.py            # Base reusable UI frame / styling constants
+│   ├── auth_view.py            # CustomTkinter Login and Registration forms
+│   ├── worker_view.py          # Job Feed, Distance filter, My Applications, Report Dispute modal
+│   ├── employer_view.py        # Post Job form, Manage Jobs, Applicant Actions, Report No-Show modal
+│   └── admin_view.py           # Metrics cards, Wage Disputes review, Strike management console
+│
+└── localhire.db                # Auto-generated SQLite persistent file
+
+================================================================================
+7. SAMPLE SEED DATA (Auto-insert if database is newly created)
+================================================================================
+On first launch, if the database contains no jobs, database.py must seed:
+1. Admin user: phone '0000000000', password 'admin123', district 'Ernakulam', locality 'Kaloor, Ernakulam'
+2. Employer user: phone '9876543210', password 'pass123', name 'Anand Retailers', locality 'Chinnakada, Kollam'
+3. Worker user: phone '9123456789', password 'pass123', name 'Rahul K', locality 'Kundara, Kollam'
+4. 4 Sample Jobs:
+   - "Sales Assistant" | Retail | ₹600 | Chinnakada, Kollam | 09:00 - 18:00
+   - "Wedding Catering Server" | Hospitality | ₹500 | Kaloor, Ernakulam | 17:00 - 23:00
+   - "Inventory Helper" | Logistics | ₹400 | Palayam, Thiruvananthapuram | 08:00 - 14:00
+   - "Customer Calling Assistant" | Telemarketing | ₹350 | Edappally, Ernakulam | 10:00 - 15:00
+
+================================================================================
+8. CODING AGENT INSTRUCTIONS (FOR ANTIGRAVITY)
+================================================================================
+1. Read this entire specification before writing code.
+2. Adhere strictly to the modular file structure defined in Section 6.
+3. Every button must have a functioning callback connecting to database.py or auth.py.
+4. Enforce blacklist and strike rules inside database functions, not merely by hiding UI buttons.
+5. Launch the entire application with: python main.py

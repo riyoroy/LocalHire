@@ -1,0 +1,17 @@
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# SQLite database (so you don't commit test data or lock conflicts)
+localhire.db
+
+# OS / Editor specific
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
